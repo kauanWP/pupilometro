@@ -1,0 +1,127 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Pupilômetro Digital</title>
+  <link rel="stylesheet" href="style.css">
+  <style>#status{margin-top:10px;font-size:14px;color:#333}</style>
+</head>
+<body>
+  <div class="container">
+    <h1>Pupilômetro Virtual</h1>
+    <div class="controls">
+      <input type="file" id="imageLoader" accept="image/*" />
+      <button id="autoDetectCard">Detectar Cartão</button>
+      <button id="undoPoint">Desfazer último ponto</button>
+      <button id="autoDetectPupils">Auto detectar Pupilas</button>
+      <button id="clearPoints">Limpar pontos</button>
+      <button id="exportResults">Exportar resultados</button>
+    </div>
+
+    <div class="canvas-wrap">
+      <canvas id="imageCanvas"></canvas>
+      <div id="overlayHint">Carregue uma imagem</div>
+    </div>
+
+    <div id="instructions">
+      Instruções: carregue uma foto com o cartão HPR 10×10 visível. Após a detecção automática do cartão,
+      clique para marcar o centro das pupilas (esquerda e direita).
+    </div>
+    <div id="result"></div>
+    <div id="status"></div>
+  </div>
+
+  <!-- OpenCV imediato (para detecção do cartão) -->
+  <script src="https://docs.opencv.org/4.x/opencv.js"></script>
+
+  <script>
+    const statusEl = document.getElementById('status');
+    let faceDetector = null;
+
+    function setStatus(txt) { statusEl.textContent = txt; }
+
+    function loadScriptOnce(src) {
+      return new Promise((res, rej) => {
+        if (document.querySelector(`script[src="${src}"]`)) return res();
+        const s = document.createElement('script');
+        s.src = src;
+        s.onload = () => res();
+        s.onerror = () => rej(new Error('Falha ao carregar ' + src));
+        document.head.appendChild(s);
+      });
+    }
+
+    async function tryLoadFromList(urls) {
+      let lastError = null;
+      for (const u of urls) {
+        try {
+          await loadScriptOnce(u);
+          return u;
+        } catch (err) {
+          lastError = err;
+          await new Promise(r => setTimeout(r, 120));
+        }
+      }
+      throw lastError || new Error('Nenhuma URL disponível');
+    }
+
+    // Carrega modelos sob demanda e usa runtime 'tfjs' (não depende do mediapipe FaceMesh)
+    async function loadFaceModelIfNeeded() {
+      if (faceDetector) return faceDetector;
+      setStatus('Carregando TF.js e modelo de face (pode demorar alguns segundos)…');
+
+      try {
+        // 1) TensorFlow.js (precisa)
+        await tryLoadFromList([
+          'https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.20.0/dist/tf.min.js',
+          'https://unpkg.com/@tensorflow/tfjs@4.20.0/dist/tf.min.js'
+        ]);
+
+        // 2) face-landmarks-detection (UMD, versão recente)
+        const used = await tryLoadFromList([
+          'https://unpkg.com/@tensorflow-models/face-landmarks-detection@1.5.0/dist/face-landmarks-detection.min.js',
+          'https://cdn.jsdelivr.net/npm/@tensorflow-models/face-landmarks-detection@1.5.0/dist/face-landmarks-detection.min.js',
+          'https://cdn.jsdelivr.net/npm/@tensorflow-models/face-landmarks-detection/dist/face-landmarks-detection.min.js'
+        ]);
+        console.log('face-landmarks-detection carregado de', used);
+
+        // OBS: NÃO carregamos o @mediapipe/face_mesh aqui (porque vamos usar runtime 'tfjs').
+
+        // 3) Cria detector usando runtime 'tfjs' (evita depender do FaceMesh do mediapipe)
+        faceDetector = await faceLandmarksDetection.createDetector(
+          faceLandmarksDetection.SupportedModels.MediaPipeFaceMesh,
+          {
+            runtime: 'tfjs',         // <<-- aqui: tfjs, não 'mediapipe'
+            refineLandmarks: true,   // mantém refino de íris se suportado
+          }
+        );
+
+        setStatus('Detector TFJS pronto — você pode usar "Auto detectar pupilas".');
+        window.dispatchEvent(new CustomEvent('faceDetectorReady', { detail: faceDetector }));
+        return faceDetector;
+
+      } catch (err) {
+        console.warn('Erro ao carregar modelo de face (não crítico):', err);
+        faceDetector = null;
+        setStatus('Não foi possível carregar o modelo de detecção de pupilas. Tente novamente (verifique rede/CDN).');
+        return null;
+      }
+    }
+
+    // botão para disparar o carregamento
+    document.getElementById('autoDetectPupils').addEventListener('click', async () => {
+      setStatus('Preparando detecção de pupilas...');
+      await loadFaceModelIfNeeded();
+    });
+
+    // OpenCV pronto (para detectar cartão)
+    cv['onRuntimeInitialized'] = () => {
+      console.log('OpenCV.js carregado e pronto!');
+      if (!statusEl.textContent) setStatus('OpenCV pronto. Carregue uma imagem para começar.');
+    };
+  </script>
+
+  <script src="script.js"></script>
+</body>
+</html>
